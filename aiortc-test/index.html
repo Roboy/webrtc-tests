@@ -1,0 +1,158 @@
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC demo</title>
+    <style>
+    button {
+        padding: 8px 16px;
+    }
+
+    pre {
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    video {
+        width: 100%;
+    }
+
+    .option {
+        margin-bottom: 8px;
+    }
+
+    #media {
+        max-width: 1280px;
+    }
+
+    .slidecontainer {
+        width: 100%;
+    }
+    .slider {
+        width: 80%;
+        margin: 0 10%;
+    }
+
+    .top-container {
+        display: flex;
+        flex-direction: row;
+        gap: 1em;
+    }
+    .top-container-left .top-container-middle {
+        flex-grow: 4;
+    }
+    .top-container-right {
+        max-width: 30%;
+        flex-grow: 4;
+    }
+    </style>
+</head>
+<body>
+
+<div class="top-container">
+    <div class="top-container-left">
+<h2>Options</h2>
+<div class="option">
+    <!--<input id="use-datachannel" checked="checked" type="checkbox"/>
+    <label for="use-datachannel">Use datachannel</label>-->
+    Datachannel:
+    <select id="datachannel-parameters">
+        <option value='{"ordered": true}'>Ordered, reliable</option>
+        <option value='{"ordered": false, "maxRetransmits": 0}'>Unordered, no retransmissions</option>
+        <option value='{"ordered": false, "maxPacketLifetime": 500}'>Unordered, 500ms lifetime</option>
+    </select>
+</div>
+<div class="option">
+    <input id="use-media" type="checkbox"/>
+    <label for="use-media">Send video & audio</label><br>
+    <!--<input id="use-audio" checked="checked" type="checkbox"/>
+    <label for="use-audio">Use audio</label>-->
+    Audio:
+    <select id="audio-codec">
+        <option value="default" selected>Default codecs</option>
+        <option value="opus/48000/2">Opus</option>
+        <option value="PCMU/8000">PCMU</option>
+        <option value="PCMA/8000">PCMA</option>
+    </select>
+</div>
+<div class="option">
+    <!--<input id="use-video" type="checkbox"/>
+    <label for="use-video">Use video</label>-->
+    Video:
+    <!--<select id="video-resolution">
+        <option value="" selected>Default resolution</option>
+        <option value="320x240">320x240</option>
+        <option value="640x480">640x480</option>
+        <option value="960x540">960x540</option>
+        <option value="1280x720">1280x720</option>
+        <option value="1920x1080">1920x1080</option>
+    </select>-->
+    <!--<select id="video-transform">
+        <option value="none" selected>No transform</option>
+        <option value="edges">Edge detection</option>
+        <option value="cartoon">Cartoon effect</option>
+        <option value="rotate">Rotate</option>
+    </select>-->
+    <select id="video-codec">
+        <option value="default">Default codecs</option>
+        <option value="VP8/90000">VP8</option>
+        <option value="H264/90000" selected>H264</option>
+    </select>
+    <div class="slidecontainer">
+        Target Bitrate: <span id="target_bitrate_value"></span> kBit/s<br>
+        <input type="range" min="1" max="5000" value="50" class="slider" id="target_bitrate"><br>
+        (only works with H.264)
+    </div>
+</div>
+<div class="option">
+    <input id="use-stun" type="checkbox" checked/>
+    <label for="use-stun">Use STUN server</label><br>
+    Check this box if video does not load
+</div>
+
+<button id="start" onclick="start()">Start</button>
+<button id="stop" style="display: none" onclick="stop()">Stop</button>
+
+    </div>
+    <div class="top-container-middle">
+<h2>State</h2>
+<p>
+    ICE gathering state: <span id="ice-gathering-state"></span>
+</p>
+<p>
+    ICE connection state: <span id="ice-connection-state"></span>
+</p>
+<p>
+    Signaling state: <span id="signaling-state"></span>
+</p>
+<p>
+    Datachannel Ping: <span id="ping"></span>
+</p>
+<p>
+    <pre id="transmission-status"></pre>
+</p>
+    </div>
+    <div class="top-container-right">
+<h2>Data channel</h2>
+<pre id="data-channel" style="height: 200px;"></pre>
+    </div>
+</div>
+<div id="media" style="display: none">
+    <h2>Media</h2>
+
+    <audio id="audio" autoplay="true" controls="controls"></audio>
+    <video id="video" autoplay="true" playsinline="true" controls="controls"></video>
+</div>
+
+
+<h2>SDP</h2>
+
+<h3>Offer</h3>
+<pre id="offer-sdp"></pre>
+
+<h3>Answer</h3>
+<pre id="answer-sdp"></pre>
+
+<script src="client.js"></script>
+</body>
+</html>
