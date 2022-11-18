@@ -100,8 +100,16 @@
     </select>
     <div class="slidecontainer">
         Target Bitrate: <span id="target_bitrate_value"></span> kBit/s<br>
-        <input type="range" min="1" max="5000" value="50" class="slider" id="target_bitrate"><br>
+        <input type="range" min="1" max="5000" value="1000" class="slider" id="target_bitrate"><br>
         (only works with H.264)
+    </div>
+    <div class="slidecontainer">
+        Target FPS: <span id="target_fps_value"></span> fps<br>
+        <input type="range" min="1" max="30" value="30" class="slider" id="target_fps"><br>
+    </div>
+    <div class="slidecontainer">
+        Target Resolution: <span id="target_height_value"></span>p<br>
+        <input type="range" min="0" max="5" value="5" class="slider" id="target_height"><br>
     </div>
 </div>
 <div class="option">
@@ -118,11 +126,9 @@
 <h2>State</h2>
 <p>
     ICE gathering state: <span id="ice-gathering-state"></span>
-</p>
-<p>
+    <br/>
     ICE connection state: <span id="ice-connection-state"></span>
-</p>
-<p>
+    <br/>
     Signaling state: <span id="signaling-state"></span>
 </p>
 <p>
@@ -141,7 +147,7 @@
     <h2>Media</h2>
 
     <audio id="audio" autoplay="true" controls="controls"></audio>
-    <video id="video" autoplay="true" playsinline="true" controls="controls"></video>
+    <video id="video" autoplay="true" playsinline="true" controls="controls" muted="muted"></video>
 </div>
 
 

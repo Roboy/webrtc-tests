@@ -7,7 +7,22 @@ var dataChannelLog = document.getElementById('data-channel'),
     statLog = document.getElementById('transmission-status');
 
 var bitrate_slider = document.getElementById('target_bitrate'),
-    bitrate_slider_value = document.getElementById('target_bitrate_value');
+    bitrate_slider_value = document.getElementById('target_bitrate_value'),
+    fps_slider = document.getElementById('target_fps'),
+    fps_slider_value = document.getElementById('target_fps_value'),
+    res_slider = document.getElementById('target_height'),
+    res_slider_value = document.getElementById('target_height_value');
+
+const height_values = [144, 240, 360, 480, 720, 1080];
+
+bitrate_slider.value = 1000
+bitrate_slider_value.innerText = bitrate_slider.value;
+fps_slider.value = 30
+fps_slider_value.innerText = fps_slider.value;
+res_slider.min = 0;
+res_slider.max = height_values.length-1;
+res_slider.value = height_values.length-1;
+res_slider_value.innerText = ""+height_values[res_slider.value];
 
 // peer connection
 var pc = null;
@@ -15,6 +30,27 @@ var pc = null;
 // data channel
 var dc = null, dcInterval = null;
 
+updateBitrate = function() {
+    bitrate_slider_value.innerText = bitrate_slider.value;
+    if(dc){
+        dc.send('target_bitrate ' + bitrate_slider.value + '000');
+    }
+}
+bitrate_slider.oninput = updateBitrate;
+updateFPS = function() {
+    fps_slider_value.innerText = fps_slider.value;
+    if(dc){
+        dc.send('target_fps ' + fps_slider.value);
+    }
+}
+fps_slider.oninput = updateFPS;
+updateRes = function() {
+    res_slider_value.innerText = ""+height_values[res_slider.value];
+    if(dc){
+        dc.send('target_height ' + height_values[res_slider.value]);
+    }
+}
+res_slider.oninput = updateRes;
 
 function appendDataChannelLog(line){
     var scrolled = false;
@@ -25,12 +61,6 @@ function appendDataChannelLog(line){
         dataChannelLog.scrollTop = dataChannelLog.scrollHeight;
 }
 
-bitrate_slider.oninput = function() {
-    bitrate_slider_value.innerHTML = bitrate_slider.value;
-    if(dc){
-        dc.send('target_bitrate ' + bitrate_slider.value + '000');
-    }
-}
 
 function createPeerConnection() {
     var config = {
@@ -165,6 +195,10 @@ function start() {
                 appendDataChannelLog('> ' + message);
                 dc.send(message);
             }, 1000);
+            // send the current input values
+            updateBitrate();
+            updateFPS();
+            updateRes();
         };
         dc.onmessage = function(evt) {
             appendDataChannelLog('< ' + evt.data);

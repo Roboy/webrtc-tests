@@ -1,15 +1,20 @@
 import argparse
 import asyncio
 import datetime
+import fractions
 import json
 import logging
 import os
 import ssl
 import uuid
+from typing import Optional
+
+from av.video.reformatter import VideoReformatter
 
 logger = logging.getLogger("pc")
 try:
     import uvloop
+
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ModuleNotFoundError as e:
     logger.warning("Could not find uvloop; installing it is recommended for performance improvements")
@@ -31,6 +36,47 @@ play_file = None
 # Override bitrate parameters of h264
 aiortc.codecs.h264.MIN_BITRATE = 100_000
 aiortc.codecs.h264.MAX_BITRATE = 5_000_000
+
+
+class VideoReducerTrack(MediaStreamTrack):
+    """
+    A video stream track that reduces resolution and framerate of another video track
+    """
+
+    kind = "video"
+
+    time_epsilon = 0.01
+    """ Minimal delta that gets ignored for FPS-limits """
+
+    def __init__(self, track: MediaStreamTrack, target_fps=30, target_height=1080):
+        super().__init__()  # don't forget this!
+        assert (track.kind == "video")
+        self.track = track
+        self.target_fps = target_fps
+        self.target_height = target_height
+        self.last_frame_time = 0
+        self.__reformatter = VideoReformatter()
+
+    @staticmethod
+    def round_next_2x(n):
+        """ Scale number to next multiple of two since video encoders only allow for even pixel sizes """
+        return int(round(float(n)/2)*2)
+
+    async def recv(self):
+        # Drop frames until the target framerate is achieved
+        while True:
+            frame = await self.track.recv()
+            frame_time = frame.time
+            if fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time) <= self.time_epsilon:
+                break
+
+        self.last_frame_time = frame_time
+
+        # Scale the frame
+        h = self.round_next_2x(min(self.target_height, frame.height))
+        w = self.round_next_2x(float(h) / frame.height * frame.width)  # proportional
+        new_frame = self.__reformatter.reformat(frame, width=w, height=h)
+        return new_frame
 
 
 async def index(request):
@@ -57,54 +103,88 @@ async def offer(request):
     log_info("Created for %s", request.remote)
 
     # prepare local media
-    player = None if play_file is None else MediaPlayer(play_file, loop=True) # os.path.join(ROOT, "demo-instruct.wav"))
+    player = None if play_file is None else MediaPlayer(play_file,
+                                                        loop=True)  # os.path.join(ROOT, "demo-instruct.wav"))
+    reduced_video_track: Optional[VideoReducerTrack] = None
     if args.record_to:
-        recorder = None # MediaRecorder(args.record_to)
+        recorder = None  # MediaRecorder(args.record_to)
     else:
         recorder = MediaBlackhole()
 
     video_sender = None
+
+    target_bitrate = 1_000_000
+    target_fps = 30
+    target_height = 1080
 
     @pc.on("datachannel")
     def on_datachannel(channel):
 
         stats_last_timestamp: datetime.datetime = clock.current_datetime()
         stats_last_bytecount = 0
+
+        def h264_config_bitrate_at_fps(fps, bitrate):
+            """ Scales the bitrate with the fps because h264 internally always uses MAX_FRAME_RATE to calculate the
+            allowed bits per frame """
+            return bitrate * aiortc.codecs.h264.MAX_FRAME_RATE / fps
+
         async def sendStats():
             nonlocal stats_last_bytecount, stats_last_timestamp
             stats = await video_sender.getStats()
             sender_stats = stats["outbound-rtp_" + str(id(video_sender))]
             current_timestamp: datetime.datetime = sender_stats.timestamp
             current_bytecount = sender_stats.bytesSent
-            current_bps = (current_bytecount - stats_last_bytecount) / (current_timestamp - stats_last_timestamp).seconds
+            current_bps = (current_bytecount - stats_last_bytecount) / (
+                        current_timestamp - stats_last_timestamp).seconds
             encoder_name = str(video_sender._RTCRtpSender__encoder.__class__.__name__)
             if encoder_name == 'H264Encoder':
                 encoder_name += ' / ' + str(video_sender._RTCRtpSender__encoder.codec.name)
             channel.send("stats " + json.dumps({
                 "Codec": encoder_name,
-                "Est. Bandwidth": video_sender.lastBitrateEstimate / 1000 if hasattr(video_sender, "lastBitrateEstimate") else 'n/a',
-                "...Target kBit": video_sender._RTCRtpSender__encoder.target_bitrate / 1000,
-                "..Current kBit": current_bps*8 / 1000
+                "Target FPS": str(reduced_video_track.target_fps),
+                "Target Resolution": str(reduced_video_track.target_height) + 'p',
+                "Est. Bandwidth": video_sender.lastBitrateEstimate / 1000 if hasattr(video_sender,
+                                                                                     "lastBitrateEstimate") else 'n/a',
+                "...Target kBit": target_bitrate / 1000,
+                "fpsTarget kBit": video_sender._RTCRtpSender__encoder.target_bitrate / 1000,
+                "..Current kBit": current_bps * 8 / 1000
             }))
             stats_last_timestamp = current_timestamp
             stats_last_bytecount = current_bytecount
 
         @channel.on("message")
         async def on_message(message):
+            nonlocal target_height, target_fps, target_bitrate
             if isinstance(message, str) and message.startswith("ping"):
                 channel.send("pong" + message[4:])
-                #stat = await video_sender.getStats()
+                # stat = await video_sender.getStats()
                 try:
-                    #channel.send("vcodec is " + str(video_sender._RTCRtpSender__encoder or "") + " / " + str(video_sender._RTCRtpSender__encoder.codec or ""))
+                    # channel.send("vcodec is " + str(video_sender._RTCRtpSender__encoder or "") + " / " + str(video_sender._RTCRtpSender__encoder.codec or ""))
                     await sendStats()
                     pass
                 except Exception as e:
                     logging.error(e)
             if isinstance(message, str) and message.startswith("target_bitrate"):
                 try:
-                    bitrate_target = int(message[14:])
-                    video_sender._RTCRtpSender__encoder.target_bitrate = bitrate_target
-                    channel.send("new bitrate target is " + str(bitrate_target) + " / " + str(video_sender._RTCRtpSender__encoder.target_bitrate))
+                    target_bitrate = int(message[14:])
+                    video_sender._RTCRtpSender__encoder.target_bitrate = h264_config_bitrate_at_fps(reduced_video_track.target_fps, target_bitrate)
+                    channel.send("new bitrate target is " + str(target_bitrate) + " / " + str(
+                        video_sender._RTCRtpSender__encoder.target_bitrate))
+                except Exception as e:
+                    logging.error(e)
+            if isinstance(message, str) and message.startswith("target_fps"):
+                try:
+                    target_fps = int(message[10:])
+                    reduced_video_track.target_fps = target_fps
+                    video_sender._RTCRtpSender__encoder.target_bitrate = h264_config_bitrate_at_fps(reduced_video_track.target_fps, target_bitrate)
+                    channel.send("new fps target is " + str(target_fps))
+                except Exception as e:
+                    logging.error(e)
+            if isinstance(message, str) and message.startswith("target_height"):
+                try:
+                    target_height = int(message[13:])
+                    reduced_video_track.target_height = target_height
+                    channel.send("new pixel height target is " + str(target_height))
                 except Exception as e:
                     logging.error(e)
 
@@ -151,7 +231,8 @@ async def offer(request):
         pc.addTrack(player.audio)
 
     if player and player.video:
-        video_sender = pc.addTrack(player.video)
+        reduced_video_track = VideoReducerTrack(player.video)
+        video_sender = pc.addTrack(reduced_video_track)
 
     # send answer
     answer = await pc.createAnswer()
@@ -203,7 +284,7 @@ if __name__ == "__main__":
     # create media source
     if args.play_from:
         play_file = args.play_from
-        #logger.info("Playing %s", args.play_from)
+        # logger.info("Playing %s", args.play_from)
     else:
         play_file = None
 

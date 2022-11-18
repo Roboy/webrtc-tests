@@ -24,7 +24,7 @@ Requires some in-place modifications to the aiortc library:
      ```
      to enable bitrate modification and value tracking
 * `codecs/h264.py`
-  * consider hacking this to adjust the `lix264` parameters:
+  * consider hacking this to adjust the `libx264` parameters:
   * in line ~135
   * consider disabling profile and level parameters
   * consider adding `"preset": "ultrafast",` to improve CPU encoding
