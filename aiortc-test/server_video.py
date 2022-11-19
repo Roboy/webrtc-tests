@@ -78,6 +78,10 @@ class VideoReducerTrack(MediaStreamTrack):
         new_frame = self.__reformatter.reformat(frame, width=w, height=h)
         return new_frame
 
+    def stop(self) -> None:
+        super().stop()
+        self.track.stop()
+
 
 async def index(request):
     content = open(os.path.join(ROOT, "index.html"), "r").read()
@@ -195,7 +199,8 @@ async def offer(request):
         if pc.connectionState == "connected":
             pass
 
-        if pc.connectionState == "failed":
+        if pc.connectionState == "failed" or pc.connectionState == "closed":
+            logger.info('Closing connection')
             await pc.close()
             pcs.discard(pc)
 
