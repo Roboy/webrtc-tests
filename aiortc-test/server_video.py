@@ -5,11 +5,14 @@ import fractions
 import json
 import logging
 import os
+import platform
 import ssl
 import uuid
 from typing import Optional, Callable
 
+import av.frame
 from av.video.reformatter import VideoReformatter
+
 
 logger = logging.getLogger("pc")
 try:
@@ -38,6 +41,35 @@ aiortc.codecs.h264.MIN_BITRATE = 100_000
 aiortc.codecs.h264.MAX_BITRATE = 5_000_000
 
 
+
+webcam_relay = None
+webcam = None
+
+
+def create_webcam_track():
+    global webcam_relay, webcam
+
+    # 3840x2160
+    # 1920x1080
+    # 1280x720
+    options = {"framerate": "30", "video_size": "1920x1080", "input_format": "mjpeg"}
+    if webcam_relay is None:
+        if platform.system() == "Darwin":
+            webcam = MediaPlayer(
+                "default:none", format="avfoundation", options=options
+            )
+        elif platform.system() == "Windows":
+            webcam = MediaPlayer(
+                "video=HD USB CAMERA", format="dshow", options=options
+            )
+        else:
+            webcam = MediaPlayer("/dev/video0", format="v4l2", options=options)
+        webcam_relay = MediaRelay()
+    # buffered = false because we always want the latest image and rather drop frames if sending lags behind
+    return webcam_relay.subscribe(webcam.video, False)
+
+
+
 class VideoReducerTrack(MediaStreamTrack):
     """
     A video stream track that reduces resolution and framerate of another video track
@@ -57,28 +89,55 @@ class VideoReducerTrack(MediaStreamTrack):
         self.last_frame_time = 0
         self.__reformatter = VideoReformatter()
         self.onFrameSent: Optional[Callable] = None
+        self.__last_sent_frame_time: datetime.datetime = clock.current_datetime()
+        self.__loop = asyncio.get_event_loop()
 
     @staticmethod
     def round_next_2x(n):
         """ Scale number to next multiple of two since video encoders only allow for even pixel sizes """
         return int(round(float(n) / 2) * 2)
 
+    def __reformat(self, frame, w: int, h: int):
+        # Our Webcam provides video in mjpeg format but h264 etc encode yuv420p.
+        # We use this to also do the colour space conversion to save time not doing that later on
+        # causes ffmpeg to log a warning "deprecated pixel format used, make sure you did set range correctly",
+        # but I was not able to teach it not to
+        return self.__reformatter.reformat(frame, width=w, height=h, format="yuv420p")
+
     async def recv(self):
+        time_1 = clock.current_datetime()
+
         # Drop frames until the target framerate is achieved
         while True:
             frame = await self.track.recv()
             frame_time = frame.time
             if fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time) <= self.time_epsilon:
                 break
+            # logger.info("dropped frame to keep target fps: " + str(fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time)))
 
         self.last_frame_time = frame_time
+
+        time_2 = clock.current_datetime()
 
         # Scale the frame
         h = self.round_next_2x(min(self.target_height, frame.height))
         w = self.round_next_2x(float(h) / frame.height * frame.width)  # proportional
-        new_frame = self.__reformatter.reformat(frame, width=w, height=h)
+        # separate thread because this takes time
+        new_frame = await self.__loop.run_in_executor(
+            None, self.__reformat, frame, w, h
+        )
+
+        time_3 = clock.current_datetime()
         if self.onFrameSent:
-            self.onFrameSent()
+            self.onFrameSent(new_frame)
+
+        time_4 = clock.current_datetime()
+        logger.info("Frame times: encode/send: %i, fetch: %i, reformat: %i, callback: %i",
+                    (time_1 - self.__last_sent_frame_time).microseconds,
+                    (time_2 - time_1).microseconds,
+                    (time_3 - time_2).microseconds,
+                    (time_4 - time_3).microseconds)
+        self.__last_sent_frame_time = time_4
         return new_frame
 
     def stop(self) -> None:
@@ -130,13 +189,23 @@ async def offer(request):
         stats_last_timestamp: datetime.datetime = clock.current_datetime()
         stats_last_bytecount = 0
 
+        stats_last_frame_time: float = 0
+        stats_latest_frame_time: float = 0
+        stats_last_framecount = 0
+
         def h264_config_bitrate_at_fps(fps, bitrate):
             """ Scales the bitrate with the fps because h264 internally always uses MAX_FRAME_RATE to calculate the
             allowed bits per frame """
             return bitrate * aiortc.codecs.h264.MAX_FRAME_RATE / fps
 
+        def on_frame_sent(frame: av.frame.Frame):
+            nonlocal stats_last_framecount, stats_latest_frame_time
+            stats_last_framecount += 1
+            stats_latest_frame_time = frame.time
+            #channel.send("frame: " + str(frame.time))
+
         async def sendStats():
-            nonlocal stats_last_bytecount, stats_last_timestamp
+            nonlocal stats_last_bytecount, stats_last_timestamp, stats_last_framecount, stats_last_frame_time
             stats = await video_sender.getStats()
             sender_stats = stats["outbound-rtp_" + str(id(video_sender))]
             current_timestamp: datetime.datetime = sender_stats.timestamp
@@ -146,9 +215,13 @@ async def offer(request):
             encoder_name = str(video_sender._RTCRtpSender__encoder.__class__.__name__)
             if encoder_name == 'H264Encoder':
                 encoder_name += ' / ' + str(video_sender._RTCRtpSender__encoder.codec.name)
+
+            fps = stats_last_framecount / (stats_latest_frame_time - stats_last_frame_time)
+
             channel.send("stats " + json.dumps({
                 "Codec": encoder_name,
-                "Target FPS": str(reduced_video_track.target_fps),
+                " Target FPS": str(reduced_video_track.target_fps),
+                "Current FPS": str(fps),
                 "Target Resolution": str(reduced_video_track.target_height) + 'p',
                 "Est. Bandwidth": video_sender.lastBitrateEstimate / 1000 if hasattr(video_sender,
                                                                                      "lastBitrateEstimate") else 'n/a',
@@ -158,8 +231,10 @@ async def offer(request):
             }))
             stats_last_timestamp = current_timestamp
             stats_last_bytecount = current_bytecount
+            stats_last_frame_time = stats_latest_frame_time
+            stats_last_framecount = 0
 
-        reduced_video_track.onFrameSent = lambda: channel.send("frame")
+        reduced_video_track.onFrameSent = on_frame_sent
 
         @channel.on("message")
         async def on_message(message):
@@ -245,6 +320,9 @@ async def offer(request):
     if player and player.video:
         reduced_video_track = VideoReducerTrack(player.video)
         video_sender = pc.addTrack(reduced_video_track)
+    else:
+        reduced_video_track = VideoReducerTrack(create_webcam_track())
+        video_sender = pc.addTrack(reduced_video_track)
 
     # send answer
     answer = await pc.createAnswer()
@@ -286,6 +364,7 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
+    av.logging.set_level(av.logging.ERROR)
 
     if args.cert_file:
         ssl_context = ssl.SSLContext()
