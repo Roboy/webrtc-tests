@@ -7,7 +7,7 @@ import logging
 import os
 import ssl
 import uuid
-from typing import Optional
+from typing import Optional, Callable
 
 from av.video.reformatter import VideoReformatter
 
@@ -24,7 +24,7 @@ import aiortc.codecs.h264
 from aiohttp import web
 from av import VideoFrame
 
-from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription, clock
+from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription, clock, RTCDataChannel
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
 
 ROOT = os.path.dirname(__file__)
@@ -56,11 +56,12 @@ class VideoReducerTrack(MediaStreamTrack):
         self.target_height = target_height
         self.last_frame_time = 0
         self.__reformatter = VideoReformatter()
+        self.onFrameSent: Optional[Callable] = None
 
     @staticmethod
     def round_next_2x(n):
         """ Scale number to next multiple of two since video encoders only allow for even pixel sizes """
-        return int(round(float(n)/2)*2)
+        return int(round(float(n) / 2) * 2)
 
     async def recv(self):
         # Drop frames until the target framerate is achieved
@@ -76,6 +77,8 @@ class VideoReducerTrack(MediaStreamTrack):
         h = self.round_next_2x(min(self.target_height, frame.height))
         w = self.round_next_2x(float(h) / frame.height * frame.width)  # proportional
         new_frame = self.__reformatter.reformat(frame, width=w, height=h)
+        if self.onFrameSent:
+            self.onFrameSent()
         return new_frame
 
     def stop(self) -> None:
@@ -122,7 +125,7 @@ async def offer(request):
     target_height = 1080
 
     @pc.on("datachannel")
-    def on_datachannel(channel):
+    def on_datachannel(channel: RTCDataChannel):
 
         stats_last_timestamp: datetime.datetime = clock.current_datetime()
         stats_last_bytecount = 0
@@ -139,7 +142,7 @@ async def offer(request):
             current_timestamp: datetime.datetime = sender_stats.timestamp
             current_bytecount = sender_stats.bytesSent
             current_bps = (current_bytecount - stats_last_bytecount) / (
-                        current_timestamp - stats_last_timestamp).seconds
+                    current_timestamp - stats_last_timestamp).seconds
             encoder_name = str(video_sender._RTCRtpSender__encoder.__class__.__name__)
             if encoder_name == 'H264Encoder':
                 encoder_name += ' / ' + str(video_sender._RTCRtpSender__encoder.codec.name)
@@ -156,6 +159,8 @@ async def offer(request):
             stats_last_timestamp = current_timestamp
             stats_last_bytecount = current_bytecount
 
+        reduced_video_track.onFrameSent = lambda: channel.send("frame")
+
         @channel.on("message")
         async def on_message(message):
             nonlocal target_height, target_fps, target_bitrate
@@ -171,7 +176,8 @@ async def offer(request):
             if isinstance(message, str) and message.startswith("target_bitrate"):
                 try:
                     target_bitrate = int(message[14:])
-                    video_sender._RTCRtpSender__encoder.target_bitrate = h264_config_bitrate_at_fps(reduced_video_track.target_fps, target_bitrate)
+                    video_sender._RTCRtpSender__encoder.target_bitrate = h264_config_bitrate_at_fps(
+                        reduced_video_track.target_fps, target_bitrate)
                     channel.send("new bitrate target is " + str(target_bitrate) + " / " + str(
                         video_sender._RTCRtpSender__encoder.target_bitrate))
                 except Exception as e:
@@ -180,7 +186,8 @@ async def offer(request):
                 try:
                     target_fps = int(message[10:])
                     reduced_video_track.target_fps = target_fps
-                    video_sender._RTCRtpSender__encoder.target_bitrate = h264_config_bitrate_at_fps(reduced_video_track.target_fps, target_bitrate)
+                    video_sender._RTCRtpSender__encoder.target_bitrate = h264_config_bitrate_at_fps(
+                        reduced_video_track.target_fps, target_bitrate)
                     channel.send("new fps target is " + str(target_fps))
                 except Exception as e:
                     logging.error(e)
