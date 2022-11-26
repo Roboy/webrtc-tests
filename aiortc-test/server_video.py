@@ -87,10 +87,14 @@ class VideoReducerTrack(MediaStreamTrack):
         self.target_fps = target_fps
         self.target_height = target_height
         self.last_frame_time = 0
-        self.__reformatter = VideoReformatter()
+        # Pipelining: we run multiple reformatters in parallel (otherwise we segfault)
+        self.__reformatter = [VideoReformatter(), VideoReformatter()]
+        self.__next_reformatter = 0
         self.onFrameSent: Optional[Callable] = None
         self.__last_sent_frame_time: datetime.datetime = clock.current_datetime()
         self.__loop = asyncio.get_event_loop()
+        self.__next_frame = None
+        self.__recv_lock = asyncio.Lock()
 
     @staticmethod
     def round_next_2x(n):
@@ -102,22 +106,25 @@ class VideoReducerTrack(MediaStreamTrack):
         # We use this to also do the colour space conversion to save time not doing that later on
         # causes ffmpeg to log a warning "deprecated pixel format used, make sure you did set range correctly",
         # but I was not able to teach it not to
-        return self.__reformatter.reformat(frame, width=w, height=h, format="yuv420p")
 
-    async def recv(self):
-        time_1 = clock.current_datetime()
+        # Get the next reformatter and swap so that we can run multiple in parallel
+        r = self.__next_reformatter
+        self.__next_reformatter = (self.__next_reformatter + 1) % len(self.__reformatter)
+        return self.__reformatter[r].reformat(frame, width=w, height=h, format="yuv420p")
 
-        # Drop frames until the target framerate is achieved
-        while True:
-            frame = await self.track.recv()
-            frame_time = frame.time
-            if fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time) <= self.time_epsilon:
-                break
-            # logger.info("dropped frame to keep target fps: " + str(fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time)))
+    async def __prepare_next_frame(self):
+        # This function can be called multiple times in parallel (pipelining of reformatting).
+        # Make sure only one gets the latest frame
+        async with self.__recv_lock:
+            # Drop frames until the target framerate is achieved
+            while True:
+                frame = await self.track.recv()
+                frame_time = frame.time
+                if fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time) <= self.time_epsilon:
+                    break
+                # logger.info("dropped frame to keep target fps: " + str(fractions.Fraction(1, self.target_fps) - (frame_time - self.last_frame_time)))
 
-        self.last_frame_time = frame_time
-
-        time_2 = clock.current_datetime()
+            self.last_frame_time = frame_time
 
         # Scale the frame
         h = self.round_next_2x(min(self.target_height, frame.height))
@@ -127,18 +134,40 @@ class VideoReducerTrack(MediaStreamTrack):
             None, self.__reformat, frame, w, h
         )
 
+        return new_frame
+
+
+    async def recv(self):
+        time_1 = clock.current_datetime()
+
+        if self.__next_frame is None:
+            self.__next_frame = asyncio.ensure_future(self.__prepare_next_frame())
+
+        # Do the swapparoo to "pipeline" frames so multiple frames can be reformatted in parallel
+        next_frame = self.__next_frame
+
+        # Already launch preparation of next frame so eg. reformat can run in parallel
+        self.__next_frame = asyncio.ensure_future(self.__prepare_next_frame())
+
+        time_2 = clock.current_datetime()
+
+        # Only await the task after the next one has been started
+        frame = await next_frame
+
         time_3 = clock.current_datetime()
+
         if self.onFrameSent:
-            self.onFrameSent(new_frame)
+            self.onFrameSent(frame)
 
         time_4 = clock.current_datetime()
-        logger.info("Frame times: encode/send: %i, fetch: %i, reformat: %i, callback: %i",
+        logger.info("Frame times: encode/send: %i, next f setup: %i, fetch/wait reformat: %i, callback: %i",
                     (time_1 - self.__last_sent_frame_time).microseconds,
                     (time_2 - time_1).microseconds,
                     (time_3 - time_2).microseconds,
                     (time_4 - time_3).microseconds)
         self.__last_sent_frame_time = time_4
-        return new_frame
+
+        return frame
 
     def stop(self) -> None:
         super().stop()
