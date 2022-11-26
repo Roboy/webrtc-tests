@@ -101,21 +101,19 @@ class VideoReducerTrack(MediaStreamTrack):
         """ Scale number to next multiple of two since video encoders only allow for even pixel sizes """
         return int(round(float(n) / 2) * 2)
 
-    def __reformat(self, frame, w: int, h: int):
+    def __reformat(self, frame, w: int, h: int, r=0):
         # Our Webcam provides video in mjpeg format but h264 etc encode yuv420p.
         # We use this to also do the colour space conversion to save time not doing that later on
         # causes ffmpeg to log a warning "deprecated pixel format used, make sure you did set range correctly",
         # but I was not able to teach it not to
-
-        # Get the next reformatter and swap so that we can run multiple in parallel
-        r = self.__next_reformatter
-        self.__next_reformatter = (self.__next_reformatter + 1) % len(self.__reformatter)
-        return self.__reformatter[r].reformat(frame, width=w, height=h, format="yuv420p")
+        return self.__reformatter[r].reformat(frame, width=w, height=h, format="yuv420p", interpolation="FAST_BILINEAR")
 
     async def __prepare_next_frame(self):
+        time_0 = clock.current_datetime()
         # This function can be called multiple times in parallel (pipelining of reformatting).
         # Make sure only one gets the latest frame
         async with self.__recv_lock:
+            time_1 = clock.current_datetime()
             # Drop frames until the target framerate is achieved
             while True:
                 frame = await self.track.recv()
@@ -126,13 +124,24 @@ class VideoReducerTrack(MediaStreamTrack):
 
             self.last_frame_time = frame_time
 
+            # Get the next reformatter and swap so that we can run multiple in parallel
+            r = self.__next_reformatter
+            self.__next_reformatter = (self.__next_reformatter + 1) % len(self.__reformatter)
+
+        time_2 = clock.current_datetime()
         # Scale the frame
         h = self.round_next_2x(min(self.target_height, frame.height))
         w = self.round_next_2x(float(h) / frame.height * frame.width)  # proportional
         # separate thread because this takes time
         new_frame = await self.__loop.run_in_executor(
-            None, self.__reformat, frame, w, h
+            None, self.__reformat, frame, w, h, r
         )
+
+        time_3 = clock.current_datetime()
+        logger.info("Prepare frame times: await lock: %i, receive: %i, reformat: %i",
+                    (time_1 - time_0).microseconds,
+                    (time_2 - time_1).microseconds,
+                    (time_3 - time_2).microseconds)
 
         return new_frame
 
@@ -149,23 +158,17 @@ class VideoReducerTrack(MediaStreamTrack):
         # Already launch preparation of next frame so eg. reformat can run in parallel
         self.__next_frame = asyncio.ensure_future(self.__prepare_next_frame())
 
-        time_2 = clock.current_datetime()
-
         # Only await the task after the next one has been started
         frame = await next_frame
-
-        time_3 = clock.current_datetime()
 
         if self.onFrameSent:
             self.onFrameSent(frame)
 
-        time_4 = clock.current_datetime()
-        logger.info("Frame times: encode/send: %i, next f setup: %i, fetch/wait reformat: %i, callback: %i",
+        time_2 = clock.current_datetime()
+        logger.info("Frame times: encode/send: %i, fetch/wait reformat: %i",
                     (time_1 - self.__last_sent_frame_time).microseconds,
-                    (time_2 - time_1).microseconds,
-                    (time_3 - time_2).microseconds,
-                    (time_4 - time_3).microseconds)
-        self.__last_sent_frame_time = time_4
+                    (time_2 - time_1).microseconds)
+        self.__last_sent_frame_time = time_2
 
         return frame
 
