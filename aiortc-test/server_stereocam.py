@@ -47,6 +47,7 @@ mic_relay = None
 mic = None
 
 cam_nums_lr = [0, 1]
+cam_rots = [0, 0]
 
 
 def create_webcam_track(camnum=0):
@@ -55,9 +56,11 @@ def create_webcam_track(camnum=0):
     # 3840x2160
     # 1920x1080
     # 1280x720
+
+    # Careful!! some cameras crop at lower resolutions!
     options = {
         "framerate": "30",
-        "video_size": "1280x720",
+        "video_size": "1920x1080",
         "input_format": "mjpeg",
         "rtbufsize": "10MB"
     }
@@ -102,7 +105,7 @@ def create_mic_track():
 #   -video_device_number 1 -rtbufsize 10MB -f dshow -i video="HD USB Camera"
 #   -filter_complex crop=w=ih[l],crop=w=ih[r],[l][r]hstack,format=yuv420p
 #   test.mp4
-#
+# for our fisheye cameras: ffplay -f v4l2 -i /dev/video0 -vf crop=w=0.8*iw,pad=h=iw:y=-2
 class StereoStackerTrack(MediaStreamTrack):
     kind = 'video'
 
@@ -129,15 +132,41 @@ class StereoStackerTrack(MediaStreamTrack):
         self.filtergraph = filter.Graph()
         self.bufL = self.filtergraph.add_buffer(template=sample_left)
         self.bufR = self.filtergraph.add_buffer(template=sample_right)
-        crl: FilterContext = self.filtergraph.add('crop', 'w=ih')
-        crr: FilterContext = self.filtergraph.add('crop', 'w=ih')
+        crl: FilterContext = self.filtergraph.add('crop', 'w=0.8*iw')
+        crr: FilterContext = self.filtergraph.add('crop', 'w=0.8*iw')
+        pl: FilterContext = self.filtergraph.add('pad', 'h=iw:y=-2')
+        pr: FilterContext = self.filtergraph.add('pad', 'h=iw:y=-2')
         hstack: FilterContext = self.filtergraph.add('hstack')
         self.bufSink = self.filtergraph.add('buffersink')
 
         self.bufL.link_to(crl)
         self.bufR.link_to(crr)
-        crl.link_to(hstack, 0, 0)
-        crr.link_to(hstack, 0, 1)
+        crl.link_to(pl)
+        crr.link_to(pr)
+
+        def optional_rotate(vin: FilterContext, rotation: int = 0) -> FilterContext :
+            if rotation == 1: # rotate 90°
+                out = self.filtergraph.add('transpose', 'clock')
+                vin.link_to(out)
+                return out
+            if rotation == 2: # rotate 180°
+                hf = self.filtergraph.add('hflip')
+                vf = self.filtergraph.add('vflip')
+                vin.link_to(hf)
+                hf.link_to(vf)
+                return vf
+            if rotation == 3: # rotate 270°
+                out = self.filtergraph.add('transpose', 'cclock')
+                vin.link_to(out)
+                return out
+            return vin
+
+
+        l_out = optional_rotate(pl, cam_rots[0])
+        r_out = optional_rotate(pr, cam_rots[1])
+
+        l_out.link_to(hstack, 0, 0)
+        r_out.link_to(hstack, 0, 1)
         hstack.link_to(self.bufSink)
 
     async def recv(self):
@@ -547,6 +576,8 @@ if __name__ == "__main__":
     parser.add_argument("--record-to", help="Write received media to a file."),
     parser.add_argument("--play-from", help="Read the media from a file and sent it."),
     parser.add_argument("--swaplr", help="Swap left and right camera image", action="count"),
+    parser.add_argument("--rl", help="Rotate the left image n times by 90° WARNING: this currently has a large performance impact!"),
+    parser.add_argument("--rr", help="Rotate the right image n times by 90° WARNING: this currently has a large performance impact!"),
     parser.add_argument("--verbose", "-v", action="count")
     args = parser.parse_args()
 
@@ -571,6 +602,10 @@ if __name__ == "__main__":
 
     if args.swaplr:
         cam_nums_lr.reverse()
+    if args.rl:
+        cam_rots[0] = int(args.rl)
+    if args.rr:
+        cam_rots[1] = int(args.rr)
 
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
