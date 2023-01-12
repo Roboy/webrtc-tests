@@ -1,3 +1,7 @@
 .idea/
 *.mp4
 *.pstat
+*.keylog
+*.pcapng
+*.pcap
+*.pem
