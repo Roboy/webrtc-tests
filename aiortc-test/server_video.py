@@ -76,8 +76,10 @@ def create_mic_track():
     options = {}
     if mic_relay is None:
         if platform.system() == "Darwin":
+            return None
             pass
         elif platform.system() == "Windows":
+            return None
             pass
         else:
             mic = MediaPlayer("default", format="pulse", options=options)
@@ -400,7 +402,9 @@ async def offer(request):
     else:
         reduced_video_track = VideoReducerTrack(create_webcam_track())
         video_sender = pc.addTrack(reduced_video_track)
-        pc.addTrack(create_mic_track())
+        mic_track = create_mic_track()
+        if mic_track:
+            pc.addTrack(mic_track)
 
     # send answer
     answer = await pc.createAnswer()
