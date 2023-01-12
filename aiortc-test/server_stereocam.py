@@ -131,6 +131,7 @@ class StereoStackerTrack(MediaStreamTrack):
         crr: FilterContext = self.filtergraph.add('crop', 'w=ih')
         hstack: FilterContext = self.filtergraph.add('hstack')
         self.bufSink = self.filtergraph.add('buffersink')
+
         self.bufL.link_to(crl)
         self.bufR.link_to(crr)
         crl.link_to(hstack, 0, 0)
@@ -145,6 +146,12 @@ class StereoStackerTrack(MediaStreamTrack):
             self.right.recv()
         )
 
+        # manually set the timestamp of the right image to the same as the left image.
+        # this makes it clear to the whole filter chain that the frames belong together
+        # otherwise, some filters will buffer (hstack) to sync up the video frames
+        # which creates huge delays because the timestamps of the two cameras are not synced up
+        r_frame.pts = l_frame.pts
+
         time_1 = clock.current_datetime()
 
         if self.filtergraph is None:
@@ -157,7 +164,16 @@ class StereoStackerTrack(MediaStreamTrack):
 
         time_3 = clock.current_datetime()
 
-        frame = self.bufSink.pull()
+        frame: av.frame.Frame = self.bufSink.pull()
+        #frame.pts = l_frame.pts
+        #frame.time_base = l_frame.time_base
+
+        # sometimes frames accumulate in the buffer; clear it!
+        try:
+            self.bufSink.pull()
+            logger.info("had something to pull!")
+        except:
+            pass
 
         time_4 = clock.current_datetime()
 
@@ -166,6 +182,7 @@ class StereoStackerTrack(MediaStreamTrack):
                    (time_2 - time_1).microseconds,
                    (time_3 - time_2).microseconds,
                    (time_4 - time_3).microseconds)
+        logger.info("time diff l %s, r %s, after %s", str(l_frame.time), str(r_frame.time), str(frame.time))
 
         return frame
 
