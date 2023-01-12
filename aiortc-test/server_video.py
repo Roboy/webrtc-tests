@@ -138,10 +138,10 @@ class VideoReducerTrack(MediaStreamTrack):
         )
 
         time_3 = clock.current_datetime()
-        logger.info("Prepare frame times: await lock: %i, receive: %i, reformat: %i",
-                    (time_1 - time_0).microseconds,
-                    (time_2 - time_1).microseconds,
-                    (time_3 - time_2).microseconds)
+        #logger.info("Prepare frame times: await lock: %i, receive: %i, reformat: %i",
+        #            (time_1 - time_0).microseconds,
+        #            (time_2 - time_1).microseconds,
+        #            (time_3 - time_2).microseconds)
 
         return new_frame
 
@@ -165,9 +165,9 @@ class VideoReducerTrack(MediaStreamTrack):
             self.onFrameSent(frame)
 
         time_2 = clock.current_datetime()
-        logger.info("Frame times: encode/send: %i, fetch/wait reformat: %i",
-                    (time_1 - self.__last_sent_frame_time).microseconds,
-                    (time_2 - time_1).microseconds)
+        #logger.info("Frame times: encode/send: %i, fetch/wait reformat: %i",
+        #            (time_1 - self.__last_sent_frame_time).microseconds,
+        #            (time_2 - time_1).microseconds)
         self.__last_sent_frame_time = time_2
 
         return frame
@@ -234,7 +234,7 @@ async def offer(request):
             nonlocal stats_last_framecount, stats_latest_frame_time
             stats_last_framecount += 1
             stats_latest_frame_time = frame.time
-            #channel.send("frame: " + str(frame.time))
+            channel.send("frame: " + str(frame.time))
 
         async def sendStats():
             nonlocal stats_last_bytecount, stats_last_timestamp, stats_last_framecount, stats_last_frame_time
@@ -268,10 +268,38 @@ async def offer(request):
 
         reduced_video_track.onFrameSent = on_frame_sent
 
+        async def loopmsg():
+            while not channel.readyState == "open":
+                await asyncio.sleep(0.1)
+            channel.send('hello')
+            await asyncio.sleep(3)
+            while channel.readyState != "closed":
+                for i in range(10000):
+                #while channel.bufferedAmount < 10:
+                    channel.send('test')
+                await asyncio.sleep(20)
+                #break
+
+        #asyncio.ensure_future(loopmsg())
+
+        #loopedidoop = asyncio.get_running_loop()
+        #def loopmsg2():
+        #    while not channel.readyState == "open":
+        #        await
+        #    channel.send('hello')
+        #    while channel.readyState != "closed":
+        #        #for i in range(200):
+        #        while channel.bufferedAmount < 10:
+        #            channel.send('test')
+        #        await asyncio.sleep(0)
+        #asyncio.ensure_future(loopedidoop.run_in_executor(None, loopmsg2))
+
         @channel.on("message")
         async def on_message(message):
             nonlocal target_height, target_fps, target_bitrate
             if isinstance(message, str) and message.startswith("ping"):
+                time = int(message[4:])
+                logger.info('Receive delay: %i' % int(clock.current_datetime().timestamp()*1000 - time))
                 channel.send("pong" + message[4:])
                 # stat = await video_sender.getStats()
                 try:

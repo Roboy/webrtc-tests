@@ -4,6 +4,7 @@ var dataChannelLog = document.getElementById('data-channel'),
     iceGatheringLog = document.getElementById('ice-gathering-state'),
     signalingLog = document.getElementById('signaling-state'),
     dataPing = document.getElementById('ping'),
+    testMsgsCount = document.getElementById('test-msgs'),
     statLog = document.getElementById('transmission-status');
 
 var bitrate_slider = document.getElementById('target_bitrate'),
@@ -56,6 +57,10 @@ function appendDataChannelLog(line){
     var scrolled = false;
     if(Math.abs(dataChannelLog.scrollHeight - dataChannelLog.clientHeight - dataChannelLog.scrollTop) < 10)
         scrolled = true;
+    // Shorten the amount of stuff in the log window
+    if (dataChannelLog.textContent.length > 10000) {
+        dataChannelLog.textContent = dataChannelLog.textContent.substring(dataChannelLog.textContent.length - 10000)
+    }
     dataChannelLog.textContent += line+'\n';
     if(scrolled)
         dataChannelLog.scrollTop = dataChannelLog.scrollHeight;
@@ -176,7 +181,7 @@ function start() {
             time_start = new Date().getTime();
             return 0;
         } else {
-            return new Date().getTime() - time_start;
+            return new Date().getTime();// - time_start;
         }
     }
 
@@ -192,19 +197,28 @@ function start() {
             dataChannelLog.textContent += '- open\n';
             dcInterval = setInterval(function() {
                 var message = 'ping ' + current_stamp();
-                appendDataChannelLog('> ' + message);
                 dc.send(message);
+                appendDataChannelLog('> ' + message);
             }, 1000);
             // send the current input values
             updateBitrate();
             updateFPS();
             updateRes();
         };
+        let testmsgs = 0
         dc.onmessage = function(evt) {
+            if (evt.data.substring(0, 4) === 'test') {
+                testmsgs++;
+                if (testmsgs % 10 === 0) {
+                    testMsgsCount.innerText = testmsgs;
+                }
+                return;
+            }
+            const timestamp = current_stamp();
             appendDataChannelLog('< ' + evt.data);
 
             if (evt.data.substring(0, 4) === 'pong') {
-                var elapsed_ms = current_stamp() - parseInt(evt.data.substring(5), 10);
+                var elapsed_ms = timestamp - parseInt(evt.data.substring(5), 10);
                 appendDataChannelLog(' RTT ' + elapsed_ms + ' ms');
                 dataPing.innerText = elapsed_ms + ' ms';
             }
