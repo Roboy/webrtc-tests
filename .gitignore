@@ -1,5 +1,8 @@
 .idea/
+venv
 *.mp4
+*.mjpeg
+*.mpeg
 *.pstat
 *.keylog
 *.pcapng
