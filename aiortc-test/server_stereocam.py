@@ -57,7 +57,7 @@ def create_webcam_track(camnum=0):
     # 1280x720
     options = {
         "framerate": "30",
-        "video_size": "1920x1080",
+        "video_size": "1280x720",
         "input_format": "mjpeg",
         "rtbufsize": "10MB"
     }
@@ -72,7 +72,7 @@ def create_webcam_track(camnum=0):
                 "video=HD USB Camera", format="dshow", options=options
             )
         else:
-            webcam[camnum] = MediaPlayer("/dev/video0", format="v4l2", options=options)
+            webcam[camnum] = MediaPlayer("/dev/video"+str(camnum), format="v4l2", options=options)
         webcam_relay = MediaRelay()
     # buffered = false because we always want the latest image and rather drop frames if sending lags behind
     return webcam_relay.subscribe(webcam[camnum].video, False)
@@ -167,8 +167,8 @@ class StereoStackerTrack(MediaStreamTrack):
         time_3 = clock.current_datetime()
 
         frame: av.frame.Frame = self.bufSink.pull()
-        #frame.pts = l_frame.pts
-        #frame.time_base = l_frame.time_base
+        # frame.pts = l_frame.pts
+        # frame.time_base = l_frame.time_base
 
         # sometimes frames accumulate in the buffer; clear it!
         try:
@@ -179,12 +179,12 @@ class StereoStackerTrack(MediaStreamTrack):
 
         time_4 = clock.current_datetime()
 
-        logger.info("Filter frame times: receive: %i, build graph: %i, push: %i, pull: %i",
-                   (time_1 - time_0).microseconds,
-                   (time_2 - time_1).microseconds,
-                   (time_3 - time_2).microseconds,
-                   (time_4 - time_3).microseconds)
-        logger.info("time diff l %s, r %s, after %s", str(l_frame.time), str(r_frame.time), str(frame.time))
+        # logger.info("Filter frame times: receive: %i, build graph: %i, push: %i, pull: %i",
+        #            (time_1 - time_0).microseconds,
+        #            (time_2 - time_1).microseconds,
+        #            (time_3 - time_2).microseconds,
+        #            (time_4 - time_3).microseconds)
+        # logger.info("time diff l %s, r %s, after %s", str(l_frame.time), str(r_frame.time), str(frame.time))
 
         return frame
 
