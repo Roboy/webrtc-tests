@@ -44,6 +44,8 @@ aiortc.codecs.h264.MAX_BITRATE = 5_000_000
 
 webcam_relay = None
 webcam = None
+mic_relay = None
+mic = None
 
 
 def create_webcam_track():
@@ -67,6 +69,21 @@ def create_webcam_track():
         webcam_relay = MediaRelay()
     # buffered = false because we always want the latest image and rather drop frames if sending lags behind
     return webcam_relay.subscribe(webcam.video, False)
+
+def create_mic_track():
+    global mic_relay, mic
+    
+    options = {}
+    if mic_relay is None:
+        if platform.system() == "Darwin":
+            pass
+        elif platform.system() == "Windows":
+            pass
+        else:
+            mic = MediaPlayer("default", format="pulse", options=options)
+        mic_relay = MediaRelay()
+    # buffered = false because we always want the latest image and rather drop frames if sending lags behind
+    return mic.audio #mic_relay.subscribe(mic.audio, False)
 
 
 
@@ -383,6 +400,7 @@ async def offer(request):
     else:
         reduced_video_track = VideoReducerTrack(create_webcam_track())
         video_sender = pc.addTrack(reduced_video_track)
+        pc.addTrack(create_mic_track())
 
     # send answer
     answer = await pc.createAnswer()
