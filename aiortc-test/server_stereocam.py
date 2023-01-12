@@ -46,6 +46,8 @@ webcam: List[Optional[MediaPlayer]] = [None, None, None, None]
 mic_relay = None
 mic = None
 
+cam_nums_lr = [0, 1]
+
 
 def create_webcam_track(camnum=0):
     global webcam_relay, webcam
@@ -502,8 +504,8 @@ async def offer(request):
         reduced_video_track = VideoReducerTrack(player.video)
         video_sender = pc.addTrack(reduced_video_track)
     else:
-        left_cam = create_webcam_track(camnum=0)
-        right_cam = create_webcam_track(camnum=1)
+        left_cam = create_webcam_track(camnum=cam_nums_lr[0])
+        right_cam = create_webcam_track(camnum=cam_nums_lr[1])
         stereotrack = StereoStackerTrack(left_cam, right_cam)
         reduced_video_track = VideoReducerTrack(stereotrack)
         video_sender = pc.addTrack(reduced_video_track)
@@ -532,7 +534,7 @@ async def on_shutdown(app):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="WebRTC audio / video / data-channels demo"
+        description="WebRTC stereo video demo"
     )
     parser.add_argument("--cert-file", help="SSL certificate file (for HTTPS)")
     parser.add_argument("--key-file", help="SSL key file (for HTTPS)")
@@ -544,6 +546,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--record-to", help="Write received media to a file."),
     parser.add_argument("--play-from", help="Read the media from a file and sent it."),
+    parser.add_argument("--swaplr", help="Swap left and right camera image", action="count"),
     parser.add_argument("--verbose", "-v", action="count")
     args = parser.parse_args()
 
@@ -565,6 +568,9 @@ if __name__ == "__main__":
         # logger.info("Playing %s", args.play_from)
     else:
         play_file = None
+
+    if args.swaplr:
+        cam_nums_lr.reverse()
 
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
