@@ -9,7 +9,10 @@ import platform
 import ssl
 import uuid
 from typing import Optional, Callable
-
+import cv2
+import numpy as np
+import json
+import time
 import av.frame
 from av.video.reformatter import VideoReformatter
 
@@ -254,6 +257,18 @@ async def offer(request):
             stats_last_framecount += 1
             stats_latest_frame_time = frame.time
             channel.send("frame: " + str(frame.time))
+            channel.send("faces: " + json.dumps(faceDetect(frame)))
+
+        face_cascade = cv2.CascadeClassifier(
+            "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml"
+        )
+        eye_cascade = cv2.CascadeClassifier(
+            "/usr/share/opencv4/haarcascades/haarcascade_eye.xml"
+        )
+
+        def faceDetect(frame):
+            faces = face_cascade.detectMultiScale(frame.to_ndarray(), 1.3, 5)
+            return np.array(faces).tolist()
 
         async def sendStats():
             nonlocal stats_last_bytecount, stats_last_timestamp, stats_last_framecount, stats_last_frame_time
