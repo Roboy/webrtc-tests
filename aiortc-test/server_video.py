@@ -267,6 +267,7 @@ async def offer(request):
         )
 
         def faceDetect(frame):
+            cv2.fishye.undistortImage(frame.to_ndarray())
             faces = face_cascade.detectMultiScale(frame.to_ndarray(), 1.3, 5)
             return np.array(faces).tolist()
 
