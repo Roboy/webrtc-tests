@@ -57,7 +57,7 @@ def create_webcam_track():
     # 3840x2160
     # 1920x1080
     # 1280x720
-    options = {"framerate": "30", "video_size": "1920x1080", "input_format": "mjpeg"}
+    options = {"framerate": "30", "video_size": "3072x1536", "input_format": "mjpeg"}
     if webcam_relay is None:
         if platform.system() == "Darwin":
             webcam = MediaPlayer(
@@ -128,6 +128,7 @@ class VideoReducerTrack(MediaStreamTrack):
         # We use this to also do the colour space conversion to save time not doing that later on
         # causes ffmpeg to log a warning "deprecated pixel format used, make sure you did set range correctly",
         # but I was not able to teach it not to
+        print(f"reformat {w} x {h}")
         return self.__reformatter[r].reformat(frame, width=w, height=h, format="yuv420p", interpolation="FAST_BILINEAR")
 
     async def __prepare_next_frame(self):
@@ -267,8 +268,16 @@ async def offer(request):
         )
 
         def faceDetect(frame):
-            cv2.fishye.undistortImage(frame.to_ndarray())
-            faces = face_cascade.detectMultiScale(frame.to_ndarray(), 1.3, 5)
+            tic = time.perf_counter()
+            print(f"({frame.height}, {frame.width})")# (1080, 2160)
+            print(frame.to_image().size) # (2160, 2080)
+            print(frame.to_ndarray().shape) # (1620, 2160) => why not (1080, 2160)???????????????!!!!!!!!!
+            print(np.array(frame.to_image().size))
+            cropped_frame_as_numpy = np.array(frame.to_image().crop((0, 0, frame.height, frame.height))) # square, only left camera
+            print(cropped_frame_as_numpy.shape)
+            faces = face_cascade.detectMultiScale(cropped_frame_as_numpy, 1.3, 5)
+            toc = time.perf_counter()
+            print(toc-tic) # average 0.12 (detection from one camera)
             return np.array(faces).tolist()
 
         async def sendStats():
