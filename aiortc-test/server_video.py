@@ -128,7 +128,6 @@ class VideoReducerTrack(MediaStreamTrack):
         # We use this to also do the colour space conversion to save time not doing that later on
         # causes ffmpeg to log a warning "deprecated pixel format used, make sure you did set range correctly",
         # but I was not able to teach it not to
-        print(f"reformat {w} x {h}")
         return self.__reformatter[r].reformat(frame, width=w, height=h, format="yuv420p", interpolation="FAST_BILINEAR")
 
     async def __prepare_next_frame(self):
@@ -258,7 +257,9 @@ async def offer(request):
             stats_last_framecount += 1
             stats_latest_frame_time = frame.time
             channel.send("frame: " + str(frame.time))
-            channel.send("faces: " + json.dumps(faceDetect(frame)))
+            face_message = "faces: " + json.dumps(faceDetect(frame))
+            channel.send(face_message)
+            print(face_message)
 
         face_cascade = cv2.CascadeClassifier(
             "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml"
@@ -269,15 +270,16 @@ async def offer(request):
 
         def faceDetect(frame):
             tic = time.perf_counter()
-            print(f"({frame.height}, {frame.width})")# (1080, 2160)
-            print(frame.to_image().size) # (2160, 2080)
-            print(frame.to_ndarray().shape) # (1620, 2160) => why not (1080, 2160)???????????????!!!!!!!!!
-            print(np.array(frame.to_image().size))
+            #print(f"({frame.height}, {frame.width})")# (1080, 2160)
+            #print(frame.to_image().size) # (2160, 2080)
+            #print(frame.to_ndarray().shape) # (1620, 2160) => why not (1080, 2160)???????????????!!!!!!!!!
+            #print(np.array(frame.to_image().size))
             cropped_frame_as_numpy = np.array(frame.to_image().crop((0, 0, frame.height, frame.height))) # square, only left camera
-            print(cropped_frame_as_numpy.shape)
+            #print(cropped_frame_as_numpy.shape)
             faces = face_cascade.detectMultiScale(cropped_frame_as_numpy, 1.3, 5)
+            print(faces)
             toc = time.perf_counter()
-            print(toc-tic) # average 0.12 (detection from one camera)
+            #print(toc-tic) # average 0.12 (detection from one camera)
             return np.array(faces).tolist()
 
         async def sendStats():
