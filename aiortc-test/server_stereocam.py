@@ -116,6 +116,11 @@ class StereoStackerTrack(MediaStreamTrack):
         self.left = left
         self.right = right
 
+
+        self.onReducedLeftFrame: Optional[Callable] = None
+        self.reducedLeftFrameRes = 200
+        self.reducedLeftFrameFPS = 5
+
         self.__loop = asyncio.get_event_loop()
         self.__next_frame = None
         self.__recv_lock = asyncio.Lock()
@@ -124,6 +129,7 @@ class StereoStackerTrack(MediaStreamTrack):
         self.bufL: Optional[FilterContext] = None
         self.bufR: Optional[FilterContext] = None
         self.bufSink: Optional[FilterContext] = None
+        self.bufRedLSink: Optional[FilterContext] = None
 
     def build_filter_graph(self, sample_left, sample_right):
         """ Builds the filter graph; to be used on-the-fly when the first frames come in """
@@ -136,8 +142,12 @@ class StereoStackerTrack(MediaStreamTrack):
         crr: FilterContext = self.filtergraph.add('crop', 'w=0.8*iw')
         pl: FilterContext = self.filtergraph.add('pad', 'h=iw:y=-2')
         pr: FilterContext = self.filtergraph.add('pad', 'h=iw:y=-2')
+        splitl: FilterContext = self.filtergraph.add('split', '2')
+        redLFPS: FilterContext = self.filtergraph.add('fps', 'fps='+str(self.reducedLeftFrameFPS))
+        redLRes: FilterContext = self.filtergraph.add('scale', 'h='+str(self.reducedLeftFrameRes)+':w=-2')
         hstack: FilterContext = self.filtergraph.add('hstack')
         self.bufSink = self.filtergraph.add('buffersink')
+        self.bufRedLSink = self.filtergraph.add('buffersink')
 
         self.bufL.link_to(crl)
         self.bufR.link_to(crr)
@@ -165,9 +175,15 @@ class StereoStackerTrack(MediaStreamTrack):
         l_out = optional_rotate(pl, cam_rots[0])
         r_out = optional_rotate(pr, cam_rots[1])
 
-        l_out.link_to(hstack, 0, 0)
+        l_out.link_to(splitl)
+
+        splitl.link_to(hstack, 0, 0)
         r_out.link_to(hstack, 0, 1)
         hstack.link_to(self.bufSink)
+
+        splitl.link_to(redLFPS, 1)
+        redLFPS.link_to(redLRes)
+        redLRes.link_to(self.bufRedLSink)
 
     async def recv(self):
         time_0 = clock.current_datetime()
@@ -203,6 +219,15 @@ class StereoStackerTrack(MediaStreamTrack):
         try:
             self.bufSink.pull()
             logger.info("had something to pull!")
+        except:
+            pass
+
+        # sometimes frames accumulate in the buffer; clear it!
+        try:
+            redLFrame = self.bufRedLSink.pull()
+            # throws exception if nothing to pull
+            if self.onReducedLeftFrame:
+                self.onReducedLeftFrame(redLFrame)
         except:
             pass
 
@@ -388,6 +413,9 @@ async def offer(request):
             stats_latest_frame_time = frame.time
             channel.send("frame: " + str(frame.time))
 
+        def on_reduced_frame(frame: av.frame.Frame):
+            logger.info('Reduced Frame')
+
         async def sendStats():
             nonlocal stats_last_bytecount, stats_last_timestamp, stats_last_framecount, stats_last_frame_time
             stats = await video_sender.getStats()
@@ -419,6 +447,7 @@ async def offer(request):
             stats_last_framecount = 0
 
         reduced_video_track.onFrameSent = on_frame_sent
+        stereotrack.onReducedLeftFrame = on_reduced_frame
 
         async def loopmsg():
             while not channel.readyState == "open":
