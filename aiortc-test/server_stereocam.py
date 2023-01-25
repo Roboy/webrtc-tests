@@ -567,6 +567,10 @@ async def offer(request):
         stereotrack = StereoStackerTrack(left_cam, right_cam)
         reduced_video_track = VideoReducerTrack(stereotrack)
         video_sender = pc.addTrack(reduced_video_track)
+        # Only some versions of aiortc support this
+        if hasattr(video_sender, "setPlayoutDelay"):
+            logger.info('Setting Playout Delay to 0')
+            video_sender.setPlayoutDelay(0, 0)  # Keep latency as low as possible
         mic_track = create_mic_track()
         if mic_track:
             pc.addTrack(mic_track)
