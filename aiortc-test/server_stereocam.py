@@ -142,12 +142,12 @@ class StereoStackerTrack(MediaStreamTrack):
         crr: FilterContext = self.filtergraph.add('crop', 'w=0.8*iw')
         pl: FilterContext = self.filtergraph.add('pad', 'h=iw:y=-2')
         pr: FilterContext = self.filtergraph.add('pad', 'h=iw:y=-2')
-        splitl: FilterContext = self.filtergraph.add('split', '2')
-        redLFPS: FilterContext = self.filtergraph.add('fps', 'fps='+str(self.reducedLeftFrameFPS))
-        redLRes: FilterContext = self.filtergraph.add('scale', 'h='+str(self.reducedLeftFrameRes)+':w=-2')
+        #splitl: FilterContext = self.filtergraph.add('split', '2')
+        #redLFPS: FilterContext = self.filtergraph.add('fps', 'fps='+str(self.reducedLeftFrameFPS))
+        #redLRes: FilterContext = self.filtergraph.add('scale', 'h='+str(self.reducedLeftFrameRes)+':w=-2')
         hstack: FilterContext = self.filtergraph.add('hstack')
         self.bufSink = self.filtergraph.add('buffersink')
-        self.bufRedLSink = self.filtergraph.add('buffersink')
+        #self.bufRedLSink = self.filtergraph.add('buffersink')
 
         self.bufL.link_to(crl)
         self.bufR.link_to(crr)
@@ -175,15 +175,15 @@ class StereoStackerTrack(MediaStreamTrack):
         l_out = optional_rotate(pl, cam_rots[0])
         r_out = optional_rotate(pr, cam_rots[1])
 
-        l_out.link_to(splitl)
+        #l_out.link_to(splitl)
 
-        splitl.link_to(hstack, 0, 0)
+        l_out.link_to(hstack, 0, 0)
         r_out.link_to(hstack, 0, 1)
         hstack.link_to(self.bufSink)
 
-        splitl.link_to(redLFPS, 1)
-        redLFPS.link_to(redLRes)
-        redLRes.link_to(self.bufRedLSink)
+        #splitl.link_to(redLFPS, 1)
+        #redLFPS.link_to(redLRes)
+        #redLRes.link_to(self.bufRedLSink)
 
     async def recv(self):
         time_0 = clock.current_datetime()
@@ -224,10 +224,11 @@ class StereoStackerTrack(MediaStreamTrack):
 
         # sometimes frames accumulate in the buffer; clear it!
         try:
-            redLFrame = self.bufRedLSink.pull()
+            pass
+            # redLFrame = self.bufRedLSink.pull()
             # throws exception if nothing to pull
-            if self.onReducedLeftFrame:
-                self.onReducedLeftFrame(redLFrame)
+            #if self.onReducedLeftFrame:
+            #    self.onReducedLeftFrame(redLFrame)
         except:
             pass
 
