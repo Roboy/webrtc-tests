@@ -111,6 +111,9 @@ function createPeerConnection() {
 }
 
 function negotiate() {
+    // TODO:
+    // Fix stereo audio in Chrome:
+    // https://github.com/AirenSoft/OvenMediaEngine/issues/203
     return pc.createOffer(
             {
                 iceRestart: true,
