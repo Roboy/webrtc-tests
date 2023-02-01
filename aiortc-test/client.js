@@ -98,6 +98,9 @@ function createPeerConnection() {
     // connect audio / video
     pc.addEventListener('track', function(evt) {
         console.log('received track', evt.track.kind, evt.track);
+        evt.receiver.playoutDelayHint = 0;
+        evt.receiver.playoutDelay = 0;
+        evt.receiver.jitterBufferDelayHint = 0;
         if (evt.track.kind == 'video')
             document.getElementById('video').srcObject = evt.streams[0];
         else
