@@ -111,9 +111,6 @@ function createPeerConnection() {
 }
 
 function negotiate() {
-    // TODO:
-    // Fix stereo audio in Chrome:
-    // https://github.com/AirenSoft/OvenMediaEngine/issues/203
     return pc.createOffer(
             {
                 iceRestart: true,
@@ -121,7 +118,7 @@ function negotiate() {
                 offerToReceiveAudio: true
             })
         .then(function(offer) {
-        return pc.setLocalDescription(offer);
+        return pc.setLocalDescription(sdpForceStereoAudio(offer));
     }).then(function() {
         // wait for ICE gathering to complete
         return new Promise(function(resolve) {
@@ -302,6 +299,14 @@ function stop() {
     setTimeout(function() {
         pc.close();
     }, 500);
+}
+
+// Forces stereo audio enabled in SDP string
+// fixes stereo audio in Chrome:
+// https://github.com/AirenSoft/OvenMediaEngine/issues/203
+function sdpForceStereoAudio(localOffer){
+    localOffer.sdp = localOffer.sdp.replace("useinbandfec=1", "useinbandfec=1; stereo=1");
+    return localOffer;
 }
 
 function sdpFilterCodec(kind, codec, realSdp) {
